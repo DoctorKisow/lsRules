@@ -9,20 +9,20 @@ This script will pull different blocklists from i-Blocklist and parse them into 
 
 ## lsRules Git Structure
 ```shell
-     lsRules  
-     |--  master  
-     |    |--  lsRules        (Shell Script)
-     |    |--  lsRules.cfg    (Configuration File)
-     |    |--  README.md      (This File)  
-     |    |--  LICENSE        (GPL v3.0)
-     |    |--  *.lsRules      (Little Snitch Rules)
-     |
+	lsRules  
+	|--  master  
+	|    |--  lsRules        (Shell Script)
+	|    |--  lsRules.cfg    (Configuration File)
+	|    |--  README.md      (This File)  
+	|    |--  LICENSE        (GPL v3.0)
+	|    |--  *.lsRules      (Little Snitch Rules)
+	|
 ```
 
 ## Installation
 1. From LittleSnitch add the rule group subscription of your choice:
 ```shell
-     https://raw.githubusercontent.com/DoctorKisow/lsRules/master/<rule name>.lsrules
+	https://raw.githubusercontent.com/DoctorKisow/lsRules/master/<rule name>.lsrules
 ```
 ## Updating
 1. Set rule updates to manual or automatic:
