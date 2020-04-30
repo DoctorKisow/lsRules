@@ -1,0 +1,690 @@
+#!/bin/bash
+#
+# lsRules - A script to parse i-BlockList rules into Little Snitch rules.
+# Copyright (c) 2019-2020 Matthew R. Kisow, D.Sc. <matthew.kisow@kisow.org>
+#
+# License (GPL v3.0)
+# ------------------
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+# NOTES
+# Variable Definition:
+#   g) (g_<variable>) - Global declaration, variables defined for use throughout
+#                       the scripts execution.
+#   l) (l_<variable>) - Local declaration, variables defined for use in
+#                       function(s), local variables cannot be accessed globally.
+#   v) (v_<variable>) - Variable declaration, variables defined in the
+#                       configuration file and are used globally throughout the
+#                       scripts execution.
+
+# TODO
+# Issues or things left un-done:
+# --description, --name, and --notes.
+
+# Scroll to the bottom of this script to follow the main script flow.
+
+## Set how the script will behave when certain conditions are encountered.
+# Enable exiting immediately if a command exits with a non-zero status.
+  set -e
+
+# Enable erroring on un-bound (undefined) variables.
+  set -u
+
+# Enable filename patterns that match no files to expand to a null string,
+# rather than themselves.
+  shopt -s nullglob
+
+# ********************** global variable definitions *********************
+  g_PROGNAME="$(basename "${0}")"
+  g_CONFFILE="${g_PROGNAME}.conf"
+  g_VERSION="0.0.1"
+  g_PROGRAM_NAME="lsRules"
+  g_PROGRAM_DESCRIPTION="A script to parse i-BlockList rules into LittleSnitch lsRules."
+  g_COPYRIGHT_TEXT="Copyright (c) 2019-2020"
+  g_AUTHOR_TEXT="Dr. Matthew R. Kisow"
+
+# (g_<color>_TEXT) - Variables used to control how output is displayed to the
+# screen during script execution.
+  g_RED_TEXT="" g_GREEN_TEXT="" g_YELLOW_TEXT="" g_BLUE_TEXT="" g_MAGENTA_TEXT="" g_CYAN_TEXT="" g_WHITE_TEXT="" g_RESET_ATTS=""  g_ALERT_TEXT=""
+  if [[ -n "${TERM}" && "${TERM}" != "dumb" ]]; then
+	  g_RED_TEXT="$(tput setaf 1)$(tput bold)"
+	  g_GREEN_TEXT="$(tput setaf 2)$(tput bold)"
+	  g_YELLOW_TEXT="$(tput setaf 3)$(tput bold)"
+	  g_BLUE_TEXT="$(tput setaf 4)$(tput bold)"
+	  g_MAGENTA_TEXT="$(tput setaf 5)$(tput bold)"
+	  g_CYAN_TEXT="$(tput setaf 6)$(tput bold)"
+	  g_WHITE_TEXT="$(tput setaf 7)$(tput bold)"
+	  g_RESET_ATTS="$(tput sgr0)"
+	  g_ALERT_TEXT="$(tput bel)"
+  fi
+
+# (g_SCRIPT_PATH) - String value used to hold the execution path of the script.
+  g_SCRIPT_PATH="`dirname \"$0\"`"
+  g_SCRIPT_PATH="`( cd \"$g_SCRIPT_PATH\" && pwd )`"
+
+# (g_iblocklist_name) - String value used to hold the name of the i-BlockList
+# (input) filename to be downloaded from the i-BlockList site.
+  g_iblocklist_name=""
+
+# (g_lsRules_description) - String value used to hold the description of the
+# lsRules file.
+  g_lsRules_description=""
+
+# (g_lsRules_description_flag) - Boolean value used to indicate if the lsRules
+# description was set from the CLI.
+  g_lsRules_description_flag=0
+
+# (g_lsRules_name) - String value used to hold the name of the lsRules file.
+  g_lsRules_name=""
+
+# (g_lsRules_flag) - Boolean value used to indicate if the lsRules name field
+# is set from the CLI.
+  g_lsRules_name_flag=0
+
+# (g_lsRules_notes) - String value used to hold the lsRules notes field.
+  g_lsRules_notes=""
+
+# (g_lsRules_notes_flag) - Boolean value used to indicate if the lsRules notes
+# field is set from the CLI.
+  g_lsRules_notes_flag=0
+
+# The name of the lsrules (output) file name.
+  outfilename=$g_iblocklist_name
+
+# lsRules current maximum limit, (the maximum number of rules allowed in an output file).
+  g_HARD_LIMIT=200000
+
+# If the configuration file exists then source the remaining global definitions
+# from the configuration file.  If the configuration file doesn't exist display
+# an error.
+  if [ -f "${g_SCRIPT_PATH}/${g_CONFFILE}" ]; then
+	  source "${g_SCRIPT_PATH}/${g_CONFFILE}"
+  else
+	  echo
+	  echo -e "${g_RED_TEXT}* ${g_RESET_ATTS}ERROR: The configuration file doesn't exist." >&2
+	  echo -e "          Please download it from the same location that you downloaded this script from. - exiting" >&2
+
+	  # Reset error trapping.
+	  set +e
+	  trap - EXIT
+	  exit 1
+  fi
+
+# ********************************* functions *********************************
+# (cleanup_and_exit_with_code) - Function used to properly cleanup the enviornment
+# after an error; the passed value are 1 (error) or 0 (normal).
+  function cleanup_and_exit_with_code ()
+  {
+	# (l_BOOL) - Boolean value used to indicate a value of 0 or 1.
+	  l_BOOL='^[0-1]+$'
+	  if ! [[ $1 =~ $l_BOOL ]]; then
+		  error "Function: cleanup_and_exit_with_code was passed a value that is out of bounds."
+	  fi
+
+	# Error trapping is turned off because we want to handle errors.
+	  set +e
+	  trap - EXIT
+
+	  exit $1
+  }
+
+# (error) - Function for the error catching routine, display an error cleanup
+# and exit the script.
+  function error ()
+  {
+    echo
+    echo -e "${g_RED_TEXT}* ${g_RESET_ATTS}ERROR: ${1} - exiting" >&2
+    cleanup_and_exit_with_code 1
+  }
+
+# (trap_cleanup) - Function used to set how we want the script to handle any
+# error conditions it encounters and what we want to do once those error
+# conditions are encountered.
+  function trap_cleanup ()
+  {
+	  if ((v_DEBUG==0)); then
+		  trap - SIGHUP SIGQUIT SIGINT SIGTERM SIGKILL EXIT
+		  error "Caught signal"
+	  fi
+  }
+  trap trap_cleanup SIGHUP SIGQUIT SIGINT SIGTERM SIGKILL EXIT
+
+# (set_error_trapping) - Function used to enable and disable error handeling,
+# unbound variables and filename pattern matching; the passed value is 1
+# for enabled or 0 for disabled.
+  function set_error_trapping ()
+  {
+	  # (l_BOOL) - Boolean value used to indicate a value of 0 or 1.
+	  l_BOOL='^[0-1]+$'
+	  if ! [[ $1 =~ $l_BOOL ]]; then
+		  error "Function: set_error_trapping was passed a value that is out of bounds."
+	  fi
+
+	  # (l_TRAP) - Local boolean value used to enable and disable how the script
+	  # behaves when certain error conditions are met.
+	  local l_TRAP="${1}"
+
+	  if ((l_TRAP == 0)); then
+		  # Disable errors when a command exits with a non-zero status.
+		  set +e
+
+		  # Disable errors on unbound (undefined) variables.
+		  set +u
+
+		  # Disable allowing filename patterns that match no files to expand to a null
+		  # string, rather than themselves.
+		  shopt -u nullglob
+	  else
+		  # Enable exiting immediately if a command exits with a non-zero status.
+		  set -e
+
+		  # Enable erroring on unbound (undefined) variables.
+		  set -u
+
+		  # Enable filename patterns that match no files to expand to a null
+		  # string, rather than themselves.
+		  shopt -s nullglob
+	  fi
+  }
+
+# (print_usage) - Function used to display the scripts usage and command line
+# options.
+  function print_usage ()
+  {
+	script_banner
+
+	cat << EOF
+	Usage: ${g_PROGNAME} [options]
+	Options:
+	 --list		set the i-BlockList file to download and process
+	 --description	set the LittleSnitch lsRules file description
+	 --name		set the LittleSnitch lsRules file name
+	 --notes	set the LittleSnitch lsRules rule notes
+	 -h		show this help message and exit
+	 -v		display the version number of ${g_PROGNAME} and exit
+EOF
+  }
+
+# (help) - Function used to display the scripts usage and command line options.
+  function help ()
+  {
+	  printf "${g_PROGNAME} - ${g_PROGRAM_DESCRIPTION}\n"
+	  print_usage
+  }
+
+# (print_version) - Function used to print the script version.
+  function print_version ()
+  {
+	  printf "%s\n" "${g_VERSION}"
+  }
+
+# (display_usage_message_and_bail_out) - Function used to display the usage when
+# an invalid command line option is passed to the script.
+  function display_usage_message_and_bail_out ()
+  {
+	  if [ ! -z "${1+x}" ]; then
+		  printf "%s: %s\n" "${g_PROGNAME}" "${1}" >&2
+	  fi
+
+	  print_usage >&2
+	  cleanup_and_exit_with_code 1
+  }
+
+# (process_command_line_options) - Function used to set and validate command line
+# options passed to the script.
+  function process_command_line_options ()
+  {
+	# (l_RC) - Local array used to hold the list of command line arguements
+	# passed from the cammandline during script execution.
+	  local l_RC
+
+	  optspec=":hv-:"
+	  l_RC=$@
+
+	  # Check if any invalid options were passed and display help.
+	  if [ -z "$l_RC" ]; then
+		  display_usage_message_and_bail_out
+	  fi
+
+	  while getopts "$optspec" optchar; do
+		  case "${optchar}" in
+			  -)
+				  case "${OPTARG}" in
+					  list)
+						  val="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
+						  g_iblocklist_name=${val}
+						  ;;
+					  list=*)
+						  val=${OPTARG#*=}
+						  opt=${OPTARG%=$val}
+						  g_iblocklist_name=${val}
+						  ;;
+					  description)
+						  val="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
+						  g_lsRules_description=${val}
+						  g_lsRules_description_flag=1
+						  ;;
+					  description=*)
+						  val=${OPTARG#*=}
+						  opt=${OPTARG%=$val}
+						  g_lsRules_description=${val}
+						  g_lsRules_description_flag=1
+						  ;;
+					  name)
+						  val="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
+						  g_lsRules_name=${val}
+						  g_lsRules_name_flag=1
+						  ;;
+					  name=*)
+						  val=${OPTARG#*=}
+						  opt=${OPTARG%=$val}
+						  g_lsRules_name=${val}
+						  g_lsRules_name_flag=1
+						  ;;
+					  notes)
+						  val="${!OPTIND}"; OPTIND=$(( $OPTIND + 1 ))
+						  g_lsRules_notes=${val}
+						  g_lsRules_notes_flag=1
+						  ;;
+					  notes=*)
+						  val=${OPTARG#*=}
+						  opt=${OPTARG%=$val}
+						  g_lsRules_notes=${val}
+						  g_lsRules_notes_flag=1
+						  ;;
+					   ??*)
+						  echo "Illegal option: '--${OPTARG}'"
+						  cleanup_and_exit_with_code 1
+						  ;;
+				  esac;;
+		  h)
+			  print_usage
+			  cleanup_and_exit_with_code 1
+			  ;;
+		  v)
+			  print_version
+			  cleanup_and_exit_with_code 1
+			  ;;
+		  *)
+			  echo "Illegal option: '-${OPTARG}'"
+			  cleanup_and_exit_with_code 1
+			  ;;
+		 esac
+	  done
+  }
+
+# (script_banner) - Function used to display the program banner when it is executed
+# interactively from the CLI.
+  function script_banner ()
+  {
+	  clear
+	  printf "${g_WHITE_TEXT}${g_PROGRAM_NAME}, v${g_VERSION}${g_RESET_ATTS}\n"
+	  printf "${g_CYAN_TEXT}${g_COPYRIGHT_TEXT}, ${g_AUTHOR_TEXT}\n${g_RESET_ATTS}"
+	  printf -- "--------------------------------------------------------------------------------\n"
+  }
+
+# (download) - Function used to download file(s) then uncompress and cleanup.
+  function download ()
+  {
+	# ********************** local variable definitions **********************
+
+	# (l_effective_url) - Local string variable used to hold the effective URL
+	# from the i-BlockList URL.
+	  local l_effective_url
+
+	# (l_listname) - Local string variable used to hold the passed in list name
+	# arguement.
+	  local l_listname=$1
+
+	# (l_archive_type) - Local string variable used to hold the type of archive
+	# file requested.
+	  local l_archive_type="zip"
+
+	# (l_downloaded_file) - Local string variable used to hold the output file
+	# name.
+	  local l_downloaded_file=$l_listname.$l_archive_type
+
+	# (l_uncompressed_file) - Local string variable used to hold the uncompressed
+	# text filename.
+	  local l_uncompressed_file=$l_listname
+	# *************************************************************************
+
+	# Download requested file.
+	  l_effective_url=$(curl -Ls -o /dev/null -w %{url_effective} "http://list.iblocklist.com/?list=$l_listname&fileformat=p2p&archiveformat=$l_archive_type&username=$v_username&pin=$v_password")
+	  curl -Ls $l_effective_url --output $l_downloaded_file
+
+	# Uncompress the downloaded archive file.
+	  unzip -qqo $l_downloaded_file
+	  rm $l_downloaded_file
+
+	# Remove uncompressed files headers and blank lines.
+	  awk 'NR>2' "$l_uncompressed_file.txt" >> "$l_uncompressed_file.tmp"
+	  mv $l_uncompressed_file{.tmp,.txt}
+	  awk NF "$l_uncompressed_file.txt" >> "$l_uncompressed_file.tmp"
+	  mv $l_uncompressed_file{.tmp,.txt}
+
+	# If the extracted archive's comparison (.comp) file does not exist then
+	# extract the archive and create a new comparison file.
+	  if [ ! -f $l_uncompressed_file.comp ]; then
+		# Create the comparison (.comp) file.
+		  cp $l_uncompressed_file{.txt,.comp}
+
+		# A comparison (.comp) file wasn't located so the i-BlockList (.txt) file
+		# is new to this script, return true (0).
+		  return 0
+
+	# Else the extracted archive's comparison (.comp) file exists, compare
+	# them to see if the one downloaded now is new.
+	  else
+		# If the information contained in the i-BlockList update (.txt) file
+		# is new then update the comparison (.comp) file, return true (0).
+		  if compare $l_uncompressed_file.txt $l_uncompressed_file.comp; then
+			# Create the comparison (.comp) file.
+			  cp $l_uncompressed_file{.txt,.comp}
+
+			# A comparison (.comp) file was located and this i-BlockList has
+			# been updated since the last time the script was run, return
+			# true (0).
+			  return 0
+
+		# Else the information contained in the i-BlockList update (.txt) file
+		# is the same as the the comparison (.comp) file, return false (1).
+		  else
+			# The information contained in the i-BlockList update (.txt) file
+			# is the same as the comparison (.comp) file, return false (1).
+			  return 1
+		  fi
+	  fi
+  }
+
+# (compare) - Function to compare two different input files for processing.
+  function compare ()
+  {
+	# ********************** local variable definitions **********************
+
+	# (l_txt_file) - Local string variable used to hold new (.txt) input file.
+	  local l_txt_file=$1
+
+	# (l_bak_file) - Local string variable used to hold the comparison (.comp)
+	# input file.
+	  local l_bak_file=$2
+	# ************************************************************************
+
+	if cmp -s $l_txt_file $l_bak_file; then
+		# The files are the same, no changes.
+		return 1
+	else
+		# The files are different, update changes.
+		return 0
+	fi
+  }
+
+# (progress) - Function used to display a fixed width progress bar for number of
+# processed lines.
+  function progress ()
+  {
+	  local l_progress_bar_width=80 l_line_count=$1 l_total_lines=$2; shift
+	  printf -v dots "%*s" "$(( $l_line_count*$l_progress_bar_width/$l_total_lines ))" ""; dots=${dots// /.};
+	  printf "\r\e[K|%-*s| %3d / %s" "$l_progress_bar_width" "$dots" "$l_line_count" "$*";
+  }
+
+# (cleanup) - Function used to clean up existing rules files.
+  function cleanup ()
+  {
+	# ********************** local variable definitions **********************
+
+	# (l_filename) - Local variable used to hold the filename prefix.
+	  local l_filename=$1
+	# ************************************************************************
+
+	# Backup existing rules (.lsrules) file(s).
+	  for file in "$l_filename"*.lsrules; do
+		  if [ -f "$file" ]; then
+			  mv "$file" "${file%.lsrules}.lsbak"
+		  fi
+	  done
+  }
+
+# (clean_notes) - Function used to clean up the description being read in from
+# the input file.
+  function clean_notes ()
+  {
+	# ********************** local variable definitions **********************
+
+	# (l_notes) - Local string variable used to hold the description that
+	# needs to be cleaned up.
+	  local l_notes=$1
+	# ************************************************************************
+
+	# Modify $description by replacing / with a [space].
+	  l_notes=$(echo $l_notes | tr '/' ' ')
+
+	# Modify $description by removing all non alpha-numeric characters, keeping spaces.
+	  l_notes=$(echo $l_notes | tr -cd '[:alnum:] [:space:]')
+
+	# Modify $description making all uppercase.
+	  l_notes=$(echo $l_notes | tr '[:lower:]' '[:upper:]')
+
+	# Return cleaned up notes.
+	  echo $l_notes
+  }
+
+# (process) - Function used to convert i-BlockList file into LittleSnitch format.
+  function process ()
+  {
+	# ********************** local variable definitions **********************
+
+	# (l_iblocklist_name) - Local string variable used to hold the name of
+	# the iblocklist.
+	  local l_iblocklist_name=$1
+
+	# (l_total_lines) - Local integer variable used to hold the number of lines
+	# contained in an input file.
+	  local l_total_lines=0
+
+	# (l_current_line) - Local integer used to hold the current line number
+	# being read from the input file.
+	  local l_current_line=0
+
+	# (l_line_count) - Local integer variable used to count the individual lines
+	# as they are read in.
+	  local l_line_count=1
+
+	# (l_max_line) - Local integer variable used to calculate the maximum number
+	# of lines in the input file.
+	  local l_max_line=0
+
+	# (l_file_count) - Local integer variable used to count the number of output
+	# files required for conversion of the i-BlockList file into LittleSnitch format.
+	  local l_file_count=1
+
+	# (l_multi_files) - Local boolean variable used to indicate if an input file
+	# requires multiple output files.
+	  local l_multi_files=false
+
+	# (l_lsRules_description) - Local string variable used to hold the lsRules
+	  # description field.
+	    local l_lsRules_description=""
+
+	# (l_lsRules_name) - Local string variable used to hold the lsRules file
+	  # name field.
+	    local l_lsRules_name=""
+
+	# (l_lsRules_notes) - Local string variable used to hold the notes field
+	# read from the i-BlockList file.
+	  local l_lsRules_notes=""
+
+	# (l_range) - Local string variable used to hold the TCP/IP range read from
+	# the i-BlockList file.
+	  local l_range=""
+
+	# ************************************************************************
+
+	# Get the total number of lines in the input file.
+	  l_total_lines=$(awk 'END {print NR}' "$g_SCRIPT_PATH/$l_iblocklist_name.txt")
+
+	# If the input file has more lines than the LittleSnitch maximum, set a flag
+	# to split the output file.
+	  if [ $l_total_lines -gt $g_HARD_LIMIT ]; then
+		# Set the $l_multi_files flag to true.
+		  l_multi_files=true
+	  else
+		# Set the $l_multi_files flag to false.
+		  l_multi_files=false
+
+		# Set the name of the output file.
+		  l_outfilename="$l_iblocklist_name.lsrules"
+	  fi
+
+	# Process the input file until the $l_current_line is equal to $l_total_lines
+	  while [ $l_current_line -le $l_total_lines ]
+	  do
+		# New output file; the $l_line_count equals 1.  Create the JSON header
+		# for the LittleSnitch rules array.
+		if [ $l_line_count -eq 1 ]; then
+
+			# If there are going to be multiple output files, calculate the
+			# $l_max_lines variable each time the $l_line_count variable reaches
+			# the gobally defined maximum.
+			  if [ "$l_multi_files" = true ]; then
+
+				# Set or update the name of the output file.
+				  l_outfilename="$l_iblocklist_name-$file_count.lsrules"
+
+				# Find the difference between the $g_HARD_LIMIT and the
+				# $l_current_line number count.
+				  l_max_line=$(echo "$g_HARD_LIMIT-$l_current_line" | bc -l)
+
+				# If the calculated $l_max_line is greater than or equal to
+				# the $g_HARD_LIMIT, set the $l_max_line as the $g_HARD_LIMIT.
+				  if [ $l_max_line -ge $g_HARD_LIMIT ]; then
+					  l_max_line=$g_HARD_LIMIT
+
+				# Else the calculated $l_max_line is less than the $g_HARD_LIMIT,
+				# set $l_max_line to the difference of the $total_lines and
+				# the $current_line.
+				  else
+					l_max_line=$(echo "$l_total_lines-$l_current_line" | bc -l)
+
+					# If the $l_max_line is less than or equal to zero,
+					# break and finish.
+					  if [ $l_max_line -le 0 ]; then
+						  break
+					  fi
+				  fi
+
+			# If there are not going to be multiple output files, then set
+			# the $l_max_lines as the $l_total_lines.
+			  else
+				  l_max_line=$l_total_lines
+			  fi
+
+		   # Parse the i-BlockList file into LittleSnitch rule group format.
+			printf "{\n"													>> "$l_outfilename"
+			printf "     \"description\" : \"$l_lsRules_description\",\n" 			>> "$l_outfilename"
+			printf "     \"name\" : \"$l_lsRules_name\",\n"						>> "$l_outfilename"
+			printf "     \"rules\" : [\n"										>> "$l_outfilename"
+		fi
+
+		# Use IFS=: to locate the ":" separator and place the $l_notes and
+		# $l_range into individual variables.
+		  IFS=: read -r l_notes l_range
+
+		# Description cleanup function call.
+		  if ! [ -z "$l_notes" ]; then
+			  l_notes=$(clean_notes $l_notes)
+		  fi
+
+		  printf "                    {\n"										>> "$l_outfilename"
+		  printf "                         \"action\" : \"deny\",\n"				>> "$l_outfilename"
+		  printf "                         \"notes\" : \"$l_lsRules_notes\",\n"		>> "$l_outfilename"
+		  printf "                         \"process\" : \"any\",\n"				>> "$l_outfilename"
+		  printf "                         \"remote-addresses\" : \"$l_range\"\n"		>> "$l_outfilename"
+
+		# If we have come to the maximum size or the end of the input file
+		# then close data object and close the JSON.
+		  if [ $l_line_count -eq $l_max_line ]; then
+			printf "                    }\n"									>> "$l_outfilename"
+			printf "]}\n" 													>> "$l_outfilename"
+
+			# Reset the $l_line_count variable to 1 and increment $l_file_count
+			# if there are multiple output files.
+			  if [ "$l_multi_files" = true ]; then
+				# Reset $l_line_count to 1.
+				  l_line_count=1
+
+				# Increment the $l_file_count variable.
+				  l_file_count=$(( $l_file_count +1 ))
+			  fi
+
+		# Else close the data object.
+		  else
+			printf "                    },\n"									>> "$l_outfilename"
+
+			# Increment the $l_line_count variable.
+			  l_line_count=$(( $l_line_count + 1 ))
+		  fi
+
+		# Progress bar function call.
+		  progress "$l_current_line" "$l_total_lines"
+
+		# Increment the $l_current_line variable.
+		  l_current_line=$(( $l_current_line +1 ))
+
+	  done < "$g_SCRIPT_PATH/$l_iblocklist_name.txt"
+
+	# Send a trailing echo for the command prompt after progress bar calls.
+	  echo
+
+	# Cleanup .lsRules backup file.
+	  if [ -f "$l_iblocklist_name.lsbak" ]; then
+		  rm  "$l_iblocklist_name.lsbak"
+	  fi
+  }
+
+################################################################################
+### MAIN SCRIPT CONTROL
+################################################################################
+  process_command_line_options "$@"
+
+# If script debugging is enabled, disable error trapping and un-bound variable
+# checking.
+  if ((v_DEBUG==1)); then
+	  set_error_trapping 0
+  fi
+
+# Display script banner.
+  script_banner
+
+# Change into the $g_SCRIPT_PATH directory.
+  cd $g_SCRIPT_PATH
+
+  if download $g_iblocklist_name; then
+	  cleanup $g_iblocklist_name
+	  process $g_iblocklist_name
+  else
+	  printf "${g_PROGRAM_NAME}: No updates currently available.\n"
+  fi
+
+# Disable errors when a command exits with a non-zero status.
+  set +e
+
+# Disable error trapping.
+  trap - EXIT
+
+# Error trapping has been disabled; exit the script.
+  exit 0
+################################################################################

@@ -1,0 +1,11 @@
+# Exclude all ".DS_Store" file(s) in the entire project.
+.DS_Store
+
+# Exclude all ".txt" file(s) from i-BlockList downloaded in the project.
+*.txt
+
+# Exclude "lsRules.conf" which contains sensitive data.
+lsRules.conf
+
+# Exclude all ".comp" comparison file(s) in the project.
+*.comp
